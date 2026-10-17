@@ -28,9 +28,9 @@ jobs:
         run: |
           SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$SM" ] || SM=$(command -v sdkmanager)
-          yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1
-          "$SM" "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1
-          ls "$ANDROID_HOME/platforms"
+          yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
+          "$SM" "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1 || true
+          ls "$ANDROID_HOME/platforms" || true
 
       - name: gradle
         run: |
@@ -42,6 +42,7 @@ jobs:
         id: g
         continue-on-error: true
         run: |
+          set +e
           cd android
           /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon \
             -Dorg.gradle.jvmargs=-Xmx3g > /tmp/g.log 2>&1
@@ -49,10 +50,14 @@ jobs:
           cd ..
           mkdir -p out
           find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null
+          ls -la out
+          set -e
 
       - name: WHY
         if: always()
         run: |
+          touch /tmp/g.log /tmp/e.txt
+          echo "== EXIT =="
           cat /tmp/e.txt
           echo "== WHAT WENT WRONG =="
           grep -m1 -A8 "What went wrong:" /tmp/g.log
@@ -61,11 +66,12 @@ jobs:
           echo "== CAUSE =="
           grep -m2 -A2 "Caused by:" /tmp/g.log
           echo "== APK =="
-          ls out
+          ls out || true
           grep -m1 -A8 "What went wrong:" /tmp/g.log | tr '\n' ' ' | cut -c1-400 \
             | sed 's/^/::error::WHY>> /'
           grep -m5 "error:" /tmp/g.log | tr '\n' ' ' | cut -c1-400 \
             | sed 's/^/::error::ERR>> /'
+          true
 
       - name: fail-if-no-apk
         run: |
