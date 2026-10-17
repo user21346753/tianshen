@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
@@ -75,29 +75,38 @@ jobs:
           cd android
           /opt/gradle-8.5/bin/gradle assembleDebug \
             --no-daemon --stacktrace \
-            -Dorg.gradle.jvmargs=-Xmx3g \
-            -Dorg.gradle.android.builder.sdkDownload=true > /tmp/gradle.log 2>&1
+            -Dorg.gradle.jvmargs=-Xmx3g > /tmp/gradle.log 2>&1
           ST=$?
           cd ..
           echo "GRADLE EXIT CODE = $ST"
-          echo "########## TAIL OF GRADLE LOG ##########"
-          tail -60 /tmp/gradle.log
           if [ "$ST" -ne 0 ]; then
             echo "########## WHAT WENT WRONG ##########"
-            sed -n '/What went wrong:/,/^\* Try:/p' /tmp/gradle.log | head -40
+            sed -n '/What went wrong:/,/^\* Try:/p' /tmp/gradle.log
             echo "########## ERROR LINES ##########"
-            grep -n "error:" /tmp/gradle.log | head -30
-            echo "########## FAILED TASKS ##########"
-            grep -n -A 6 "Execution failed for task" /tmp/gradle.log | head -40
+            grep -n "error:" /tmp/gradle.log | head -40
+            echo "########## FAILED TASK ##########"
+            grep -n -A 8 "Execution failed for task" /tmp/gradle.log | head -50
             echo "########## CAUSED BY ##########"
-            grep -n -A 4 "Caused by:" /tmp/gradle.log | head -40
+            grep -n -A 5 "Caused by:" /tmp/gradle.log | head -60
+            echo "########## ANNOTATIONS FOR GITHUB ##########"
+            sed -n '/What went wrong:/,/^\* Try:/p' /tmp/gradle.log \
+              | tr '\n' ' ' | cut -c1-600 \
+              | sed 's/^/::error::WHAT_WENT_WRONG /' 
+            grep -m 5 "error:" /tmp/gradle.log \
+              | tr '\n' ' ' | cut -c1-600 \
+              | sed 's/^/::error::JAVA_ERROR /'
+            grep -m 3 -A 3 "Caused by:" /tmp/gradle.log \
+              | tr '\n' ' ' | cut -c1-600 \
+              | sed 's/^/::error::CAUSED_BY /'
+            echo "########## TAIL ##########"
+            tail -50 /tmp/gradle.log
             exit 1
           fi
           mkdir -p out
           find . -name "*.apk" -print
           find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null || true
           ls -la out
-          test -n "$(ls -A out)" || { echo "FATAL: gradle ok but no apk found"; find . -name "*.apk" -print; ls -la android/app/build/outputs 2>/dev/null; exit 1; }
+          test -n "$(ls -A out)" || { echo "FATAL: no apk"; ls -la android/app/build/outputs 2>/dev/null; exit 1; }
 
       - name: upload-artifact
         uses: actions/upload-artifact@v4
