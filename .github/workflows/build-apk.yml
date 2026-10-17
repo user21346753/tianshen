@@ -1,74 +1,129 @@
-name: 构建天神辅助 APK
+姓名: 构建天神辅助 APK
 
-on:
-  push:
-    branches: [ "**" ]
-  workflow_dispatch:
+在……之上:
+推:
+分支机构: [ "**" ]
+workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+工作:
+建立:
+连续的: Ubuntu-最新
+权限:
+内容: 写
 
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+env:
+Android_HOME: /usr/local/lib/android/sdk
+Android_SDK_ROOT: /usr/local/lib/android/sdk
 
-      - name: 解压工程
+步骤:
+      - 姓名: 1. 检出代码
+uses: 操作/结帐@v4
+
+      - 姓名: 2. 解压工程
+跑: |
+回声"===仓库根目录==="
+LS-la
+姓名
+如果[-f"$z"]；则
+回声"解压$z"
+unzip-o-q"$z"
+RM-f"$z"
+Fi
+已完成
+回声"===解压后==="
+LS-la
+回声"===工程目录==="
+ls-拉天神/||回声"！！找不到天山目录"
+LS-拉天神/机器人/||回声"！！找不到安卓目录"
+
+      - 姓名: 3.准备JDK 17
+uses: 操作/设置-Java@v4
+和……一起:
+分布: temurin
+java版: '17'
+
+姓名4.检查并修复Android SDK: 4.检查并修复Android SDK
+跑: |
+回声"ANDROID_HOME=$ANDROID_HOME"
+LS"$ANDROID_HOME"||echo"！！SDK目录不存在"
+回声"===已安装的平台==="
+LS"$ANDROID_HOME/platforms"2>/dev/null||echo"无平台"
+回声"====已安装的构建工具==="
+LS"$ANDROID_HOME/build-tools"2>/dev/null||echo"无构建工具”
+
+出口path=$ANDROID_HOME/cmdline-tools/last/bin：$PATH
+如果命令-v sdkmanager>/dev/null2>&1；，则
+yes2>/dev/null|sdkmanager--licenses>/dev/null2>&1||true
+sdkmanager--安装"platform-tools">/dev/null2>&1||true
+sdkmanager--安装"platforms；android-34">/dev/null2>&1||true
+sdkmanager--安装"build-tools；34.0.0">/dev/null2>&1||true
+其他
+echo”sdkmanager不可用，依赖跑步者预装组件"
+Fi
+          echo "=== 修复后 platforms ==="
+          ls "$ANDROID_HOME/platforms" 2>/dev/null
+
+      - name: 5. 准备 Gradle 8.5
         run: |
-          for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z" && rm -f "$z"; done
-          ls -la
-
-      - name: 准备 JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: 准备 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 准备 Gradle
-        run: |
-          if ! command -v gradle >/dev/null 2>&1; then
+          if command -v gradle >/dev/null 2>&1; then
+            echo "系统已有 gradle:"; gradle --version | head -3
+          else
+            echo "下载 Gradle 8.5..."
             curl -sL -o /tmp/g.zip https://services.gradle.org/distributions/gradle-8.5-bin.zip
-            unzip -q /tmp/g.zip -d /opt
+            sudo unzip -q /tmp/g.zip -d /opt
+            sudo chmod +x /opt/gradle-8.5/bin/gradle
             echo "/opt/gradle-8.5/bin" >> $GITHUB_PATH
+            export PATH=/opt/gradle-8.5/bin:$PATH
           fi
-          gradle --version
+          gradle --version | head -5
 
-      - name: 下载 YOLOv8n 模型（失败也能编，自动进 MOCK 模式）
+      - name: 6. 下载 YOLOv8n 模型（失败不影响编译，会自动进 MOCK 模式）
         continue-on-error: true
+姓名
         run: |
           mkdir -p tianshen/android/app/src/main/assets
           cd tianshen/android/app/src/main/assets
-          curl -sL -o yolov8n.tflite \
+          curl -sL --max-time 60 -o yolov8n.tflite \
             https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.tflite
-          if [ ! -s yolov8n.tflite ]; then
-            rm -f yolov8n.tflite
-            pip install --quiet ultralytics
-            python -c "from ultralytics import YOLO; import shutil; p=YOLO('yolov8n.pt').export(format='tflite'); shutil.copy(p,'yolov8n.tflite')"
-          fi
-          ls -la
+          SZ=$(stat -c%s yolov8n.tflite 2>/dev/null || echo 0)
+回声"下载大小：$SZ"
+如果["$SZ"-<1000000]；则
+回声"模型无效或不存在，删除，将使用MOCK模式"
+RM-f yolov8n.tflite
+其他
+回显"模型下载成功"
+Fi
+LS-la
 
-      - name: 编译 Debug APK
-        run: |
-          cd tianshen/android
-          gradle assembleDebug --no-daemon --stacktrace
+      - 姓名: 7.生成SDK路径配置
+跑: |
+回声"sdk.dir=$ANDROID_HOME">天神/Android/local.properties
+cat天神/android/local.properties
 
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: tianshen-apk
-          path: tianshen/android/app/build/outputs/apk/debug/*.apk
+      - 姓名: 8.编译调试安装包
+跑: |
+CD天神/安卓
+导流径直径=/opt/gradle-8.5/bin：$PATH
+档位组件调试--no-daemon-stacktrace2>&1|tail-60
 
-      - name: 发布到 Release（手机可直接下载 APK）
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: apk-${{ github.run_number }}
-          name: 天神辅助 APK
-          files: tianshen/android/app/build/outputs/apk/debug/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - 姓名: 9. 检查产物
+跑: |
+mkdir-p out
+查找天神/Android/app/build/outputs-name"*.apk"-exec cp{}out/\；2>/dev/null||true
+LS-la输出/
+如果[-z"$(ls-A输出)"]；循回声"！！没有生成APK"；exit1；fi
 
+      - 姓名: 10. 上传构建产物
+uses: 操作/上载工件@v4
+和……一起:
+姓名: 天神apk
+路径: out/*.apk
+
+-姓名: 11.发布到释放（手机可直接下载）
+uses: softprops/action-gh-release@v2
+和……一起:
+tag_name: apk-${{github.run_number}}
+姓名: 天神辅助apk
+文件: out/*.apk
+env:
+GitHub_TOKEN：${{secrets.GITHUB_TOKEN}}
