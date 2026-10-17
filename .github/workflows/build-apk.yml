@@ -24,7 +24,6 @@ jobs:
         run: |
           echo "=== root ==="
           ls -la
-          echo "=== unzip all ==="
           for z in $(find . -maxdepth 2 -name "*.zip"); do
             echo "unzip $z"
             unzip -o -q "$z"
@@ -72,36 +71,33 @@ jobs:
           java -version 2>&1 | head -3
 
       - name: build
-        id: gradle
-        continue-on-error: true
         run: |
           cd android
           /opt/gradle-8.5/bin/gradle assembleDebug \
             --no-daemon --stacktrace \
             -Dorg.gradle.jvmargs=-Xmx3g \
-            -Dorg.gradle.android.builder.sdkDownload=true 2>&1 | tee /tmp/gradle.log
+            -Dorg.gradle.android.builder.sdkDownload=true > /tmp/gradle.log 2>&1
+          ST=$?
           cd ..
+          echo "GRADLE EXIT CODE = $ST"
+          echo "########## TAIL OF GRADLE LOG ##########"
+          tail -60 /tmp/gradle.log
+          if [ "$ST" -ne 0 ]; then
+            echo "########## WHAT WENT WRONG ##########"
+            sed -n '/What went wrong:/,/^\* Try:/p' /tmp/gradle.log | head -40
+            echo "########## ERROR LINES ##########"
+            grep -n "error:" /tmp/gradle.log | head -30
+            echo "########## FAILED TASKS ##########"
+            grep -n -A 6 "Execution failed for task" /tmp/gradle.log | head -40
+            echo "########## CAUSED BY ##########"
+            grep -n -A 4 "Caused by:" /tmp/gradle.log | head -40
+            exit 1
+          fi
           mkdir -p out
+          find . -name "*.apk" -print
           find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null || true
           ls -la out
-
-      - name: show-gradle-error
-        if: steps.gradle.outcome != 'success'
-        run: |
-          echo "########## WHAT WENT WRONG ##########"
-          sed -n '/What went wrong:/,/^\* Try:/p' /tmp/gradle.log | head -40
-          echo "########## ERROR LINES ##########"
-          grep -n "error:" /tmp/gradle.log | head -30
-          echo "########## Caused by ##########"
-          grep -n -A 4 "Caused by:" /tmp/gradle.log | head -40
-          echo "########## TAIL ##########"
-          tail -40 /tmp/gradle.log
-          exit 1
-
-      - name: check-apk
-        run: |
-          test -n "$(ls -A out)" || { echo "FATAL: no apk produced"; exit 1; }
-          ls -la out
+          test -n "$(ls -A out)" || { echo "FATAL: gradle ok but no apk found"; find . -name "*.apk" -print; ls -la android/app/build/outputs 2>/dev/null; exit 1; }
 
       - name: upload-artifact
         uses: actions/upload-artifact@v4
