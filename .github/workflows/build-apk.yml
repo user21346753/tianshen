@@ -1,1 +1,64 @@
+name: build-apk
 
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: prep
+        run: |
+          for z in $(find . -not -path "./.git/*" -name "*.zip"); do unzip -o -q "$z"; done
+          find . -not -path "./.git/*" -name "*.java"
+          if [ -d tianshen/android ]; then rm -rf android; cp -r tianshen/android android; fi
+          test -f android/settings.gradle || { echo "::error::NO_SETTINGS_GRADLE"; exit 1; }
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - name: sdk
+        run: |
+          SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SM" ] || SM=$(command -v sdkmanager)
+          yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1
+          "$SM" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null 2>&1
+          ls "$ANDROID_HOME/platforms"
+
+      - name: gradle
+        run: |
+          curl -sSL -o /tmp/g.zip https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          sudo unzip -q -o /tmp/g.zip -d /opt
+          sudo chmod +x /opt/gradle-8.5/bin/gradle
+
+      - name: build
+        run: |
+          set -o pipefail
+          cd android
+          /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs=-Xmx3g 2>&1 | tail -100
+          cd ..
+          mkdir -p out
+          find . -name "*.apk" -exec cp {} out/ \;
+          ls -la out
+          test -n "$(ls -A out)" || { echo "::error::NO_APK"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: out/*.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          files: out/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
