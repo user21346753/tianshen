@@ -22,52 +22,79 @@ jobs:
 
       - name: prepare-source
         run: |
-          pwd
+          echo "=== root ==="
           ls -la
-          if [ ! -d android ]; then
-            for z in *.zip; do
-              if [ -f "$z" ]; then unzip -o -q "$z"; fi
-            done
-          fi
-          if [ -d tianshen ]; then
-            cp -r tianshen/android . 2>/dev/null || true
-          fi
-          echo "--- after prepare ---"
+          echo "=== find zip ==="
+          find . -maxdepth 2 -name "*.zip" -print
+          echo "=== unzip ==="
+          for z in $(find . -maxdepth 2 -name "*.zip"); do
+            echo "unzip $z"
+            unzip -o -q "$z"
+          done
+          echo "=== after unzip ==="
           ls -la
+          echo "=== locate android project ==="
+          find . -name settings.gradle -print
+          if [ -d tianshen/android ]; then
+            rm -rf android
+            cp -r tianshen/android android
+          fi
+          echo "=== android dir ==="
           ls -la android || echo NO_ANDROID_DIR
-          test -f android/settings.gradle || exit 1
+          echo "=== src ==="
+          find android -name "*.java" -print
+          test -f android/settings.gradle || { echo "FATAL: settings.gradle missing"; exit 1; }
 
       - name: setup-android-sdk
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME" || echo NO_SDK
-          SM=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
-          echo "sdkmanager=$SM"
-          if [ -x "$SM" ]; then
-            yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
-            "$SM" "platform-tools" >/dev/null 2>&1 || true
-            "$SM" "platforms;android-34" >/dev/null 2>&1 || true
-            "$SM" "build-tools;34.0.0" >/dev/null 2>&1 || true
-          fi
+          for SM in "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+                    "$ANDROID_HOME/tools/bin/sdkmanager" \
+                    "$(command -v sdkmanager)"; do
+            if [ -x "$SM" ]; then
+              echo "using sdkmanager: $SM"
+              yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
+              "$SM" "platform-tools" || true
+              "$SM" "platforms;android-34" || true
+              "$SM" "build-tools;34.0.0" || true
+              break
+            fi
+          done
           echo "--- platforms ---"
           ls "$ANDROID_HOME/platforms" || echo NO_PLATFORMS
+          echo "--- build-tools ---"
+          ls "$ANDROID_HOME/build-tools" || echo NO_BUILDTOOLS
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          cat android/local.properties
 
       - name: setup-gradle
         run: |
           curl -sSL -o /tmp/g.zip https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          ls -la /tmp/g.zip
           sudo unzip -q -o /tmp/g.zip -d /opt
-          /opt/gradle-8.5/bin/gradle --version | head -5
+          sudo chmod +x /opt/gradle-8.5/bin/gradle
+          echo "--- gradle version ---"
+          /opt/gradle-8.5/bin/gradle --version | head -8
+          echo "--- java version ---"
+          java -version 2>&1 | head -3
 
       - name: build
         run: |
           cd android
-          /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon --stacktrace
+          /opt/gradle-8.5/bin/gradle assembleDebug \
+            --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs=-Xmx3g \
+            -Dorg.gradle.android.builder.sdkDownload=true || {
+              echo "GRADLE BUILD FAILED"
+              exit 1
+            }
           cd ..
           mkdir -p out
+          find . -name "*.apk" -print
           find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null || true
           ls -la out
-          test -n "$(ls -A out)" || exit 1
+          test -n "$(ls -A out)" || { echo "FATAL: no apk produced"; exit 1; }
 
       - name: upload-artifact
         uses: actions/upload-artifact@v4
