@@ -20,17 +20,16 @@ jobs:
       - name: prep
         run: |
           for z in $(find . -not -path "./.git/*" -name "*.zip"); do unzip -o -q "$z"; done
-          find . -not -path "./.git/*" -name "*.java"
           if [ -d tianshen/android ]; then rm -rf android; cp -r tianshen/android android; fi
-          test -f android/settings.gradle || { echo "::error::NO_SETTINGS_GRADLE"; exit 1; }
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          ls android
 
       - name: sdk
         run: |
           SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$SM" ] || SM=$(command -v sdkmanager)
           yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1
-          "$SM" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null 2>&1
+          "$SM" "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1
           ls "$ANDROID_HOME/platforms"
 
       - name: gradle
@@ -40,15 +39,36 @@ jobs:
           sudo chmod +x /opt/gradle-8.5/bin/gradle
 
       - name: build
+        id: g
+        continue-on-error: true
         run: |
-          set -o pipefail
           cd android
-          /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon --stacktrace \
-            -Dorg.gradle.jvmargs=-Xmx3g 2>&1 | tail -100
+          /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon \
+            -Dorg.gradle.jvmargs=-Xmx3g > /tmp/g.log 2>&1
+          echo "EXIT=$?" > /tmp/e.txt
           cd ..
           mkdir -p out
-          find . -name "*.apk" -exec cp {} out/ \;
-          ls -la out
+          find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null
+
+      - name: WHY
+        if: always()
+        run: |
+          cat /tmp/e.txt
+          echo "== WHAT WENT WRONG =="
+          grep -m1 -A8 "What went wrong:" /tmp/g.log
+          echo "== ERRORS =="
+          grep -m5 "error:" /tmp/g.log
+          echo "== CAUSE =="
+          grep -m2 -A2 "Caused by:" /tmp/g.log
+          echo "== APK =="
+          ls out
+          grep -m1 -A8 "What went wrong:" /tmp/g.log | tr '\n' ' ' | cut -c1-400 \
+            | sed 's/^/::error::WHY>> /'
+          grep -m5 "error:" /tmp/g.log | tr '\n' ' ' | cut -c1-400 \
+            | sed 's/^/::error::ERR>> /'
+
+      - name: fail-if-no-apk
+        run: |
           test -n "$(ls -A out)" || { echo "::error::NO_APK"; exit 1; }
 
       - uses: actions/upload-artifact@v4
