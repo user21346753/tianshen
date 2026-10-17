@@ -49,28 +49,18 @@ jobs:
           echo "EXIT=$?" > /tmp/e.txt
           cd ..
           mkdir -p out
+          cp -v android/app/build/outputs/apk/debug/*.apk out/ 2>/dev/null
           find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null
-          ls -la out
           set -e
 
       - name: WHY
         if: always()
         run: |
           touch /tmp/g.log /tmp/e.txt
-          echo "== EXIT =="
-          cat /tmp/e.txt
-          echo "== WHAT WENT WRONG =="
-          grep -m1 -A8 "What went wrong:" /tmp/g.log
-          echo "== ERRORS =="
-          grep -m5 "error:" /tmp/g.log
-          echo "== CAUSE =="
-          grep -m2 -A2 "Caused by:" /tmp/g.log
-          echo "== APK =="
-          ls out || true
-          grep -m1 -A8 "What went wrong:" /tmp/g.log | tr '\n' ' ' | cut -c1-400 \
-            | sed 's/^/::error::WHY>> /'
-          grep -m5 "error:" /tmp/g.log | tr '\n' ' ' | cut -c1-400 \
-            | sed 's/^/::error::ERR>> /'
+          echo "== EXIT =="; cat /tmp/e.txt
+          echo "== ERRORS =="; grep -m5 "error:" /tmp/g.log || echo "(none)"
+          echo "== CAUSE =="; grep -m2 -A2 "Caused by:" /tmp/g.log || echo "(none)"
+          echo "== APK =="; ls -la out || true
           true
 
       - name: fail-if-no-apk
