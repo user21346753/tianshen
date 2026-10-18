@@ -37,31 +37,54 @@ jobs:
       - name: make-model
         id: mk
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: |
+          set +e
           mkdir -p android/app/src/main/assets
-          python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet ultralytics
           cd android/app/src/main/assets
-          python3 - <<'PY'
-          import shutil, os, traceback
-          from ultralytics import YOLO
 
-          # 准确率优先：从大到小尝试，成功一个就停
-          for tag in ["yolov8m", "yolov8s", "yolov8n"]:
+          ok () { [ -s "$1" ] && [ "$(stat -c%s "$1")" -gt 1000000 ]; }
+
+          # ---------- 路线 A：直接下载现成的 tflite（快） ----------
+          echo "=== ROUTE A: direct download ==="
+          for u in \
+            "https://huggingface.co/opencv/opencv_contribution/resolve/main/yolov8n/yolov8n.tflite" \
+            "https://huggingface.co/opencv/opencv_contribution/resolve/main/yolov8n/yolov8n_float32.tflite"
+          do
+            rm -f tmp.tflite
+            curl -sL --max-time 120 -o tmp.tflite "$u"
+            if ok tmp.tflite; then
+              mv tmp.tflite yolov8_det.tflite
+              echo "DOWNLOAD OK: $u"
+              break
+            fi
+            echo "download failed: $u"
+          done
+          rm -f tmp.tflite
+
+          # ---------- 路线 B：装 ultralytics + tensorflow 后导出 ----------
+          if ! ok yolov8_det.tflite; then
+            echo "=== ROUTE B: pip export ==="
+            python3 -m pip install --quiet --upgrade pip 2>&1 | tail -2
+            python3 -m pip install --quiet ultralytics tensorflow-cpu 2>&1 | tail -5
+            echo "--- versions ---"
+            python3 -c "import ultralytics,tensorflow;print('ultralytics',ultralytics.__version__);print('tf',tensorflow.__version__)" 2>&1 | tail -5
+            python3 - <<'PY' 2>&1 | tail -40
+          import shutil, os, traceback
+          for tag in ["yolov8s", "yolov8n"]:
               try:
                   print("TRY DET", tag, flush=True)
+                  from ultralytics import YOLO
                   p = YOLO(tag + ".pt").export(format="tflite", imgsz=640)
                   shutil.copy(p, "yolov8_det.tflite")
                   print("DET OK", tag, os.path.getsize("yolov8_det.tflite"), flush=True)
                   break
               except Exception:
                   traceback.print_exc()
-
-          # 姿态模型（真实骨骼关键点），同样从大到小尝试
-          for tag in ["yolov8s-pose", "yolov8n-pose"]:
+          for tag in ["yolov8n-pose"]:
               try:
                   print("TRY POSE", tag, flush=True)
+                  from ultralytics import YOLO
                   p = YOLO(tag + ".pt").export(format="tflite", imgsz=640)
                   shutil.copy(p, "yolov8_pose.tflite")
                   print("POSE OK", tag, os.path.getsize("yolov8_pose.tflite"), flush=True)
@@ -69,7 +92,11 @@ jobs:
               except Exception:
                   traceback.print_exc()
           PY
+          fi
+
+          echo "=== assets ==="
           ls -la
+          true
 
       - name: model-status
         run: |
