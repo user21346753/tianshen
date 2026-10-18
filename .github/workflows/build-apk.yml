@@ -20,7 +20,9 @@ jobs:
       - name: prep
         run: |
           for z in $(find . -not -path "./.git/*" -name "*.zip"); do unzip -o -q "$z"; done
-          if [ -d tianshen/android ]; then rm -rf android; cp -r tianshen/android android; fi
+          for d in angel tianshen; do
+            if [ -d "$d/android" ]; then rm -rf android; cp -r "$d/android" android; break; fi
+          done
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           ls android
 
@@ -31,6 +33,59 @@ jobs:
           yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
           "$SM" "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1 || true
           ls "$ANDROID_HOME/platforms" || true
+
+      - name: make-model
+        id: mk
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          mkdir -p android/app/src/main/assets
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet ultralytics
+          cd android/app/src/main/assets
+          python3 - <<'PY'
+          import shutil, os, traceback
+          from ultralytics import YOLO
+
+          # 准确率优先：从大到小尝试，成功一个就停
+          for tag in ["yolov8m", "yolov8s", "yolov8n"]:
+              try:
+                  print("TRY DET", tag, flush=True)
+                  p = YOLO(tag + ".pt").export(format="tflite", imgsz=640)
+                  shutil.copy(p, "yolov8_det.tflite")
+                  print("DET OK", tag, os.path.getsize("yolov8_det.tflite"), flush=True)
+                  break
+              except Exception:
+                  traceback.print_exc()
+
+          # 姿态模型（真实骨骼关键点），同样从大到小尝试
+          for tag in ["yolov8s-pose", "yolov8n-pose"]:
+              try:
+                  print("TRY POSE", tag, flush=True)
+                  p = YOLO(tag + ".pt").export(format="tflite", imgsz=640)
+                  shutil.copy(p, "yolov8_pose.tflite")
+                  print("POSE OK", tag, os.path.getsize("yolov8_pose.tflite"), flush=True)
+                  break
+              except Exception:
+                  traceback.print_exc()
+          PY
+          ls -la
+
+      - name: model-status
+        run: |
+          cd android/app/src/main/assets
+          D=yolov8_det.tflite
+          P=yolov8_pose.tflite
+          if [ -s "$D" ]; then
+            echo "::notice::DET_OK size=$(stat -c%s $D)"
+          else
+            echo "::error::DET_MISSING - app will run in MOCK mode"
+          fi
+          if [ -s "$P" ]; then
+            echo "::notice::POSE_OK size=$(stat -c%s $P)"
+          else
+            echo "::notice::POSE_MISSING - skeleton will use heuristic"
+          fi
 
       - name: gradle
         run: |
