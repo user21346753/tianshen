@@ -17,124 +17,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: prep
+      - name: build
         run: |
           for z in $(find . -not -path "./.git/*" -name "*.zip"); do unzip -o -q "$z"; done
           for d in angel tianshen; do
-            if [ -d "$d/android" ]; then rm -rf android; cp -r "$d/android" android; break; fi
+            if [ -f "$d/ci-build.sh" ]; then cp "$d/ci-build.sh" . && break; fi
           done
-          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          ls android
-
-      - name: sdk
-        run: |
-          SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          [ -x "$SM" ] || SM=$(command -v sdkmanager)
-          yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
-          "$SM" "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1 || true
-          ls "$ANDROID_HOME/platforms" || true
-
-      # 先探明这台 runner 到底能访问哪些源，避免盲试
-      - name: net-probe
-        run: |
-          probe () { printf '%-70s %s\n' "$1" "$(timeout 25 curl -sL -o /dev/null -w '%{http_code} %{size_download}' "$1" 2>&1)"; }
-          probe "https://pypi.org/simple/"
-          probe "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt"
-          probe "https://huggingface.co/opencv/opencv_contribution/resolve/main/yolov8n/yolov8n.tflite"
-          probe "https://huggingface.co/Ultralytics/yolov8n/resolve/main/yolov8n.tflite"
-
-      - name: make-model
-        id: mk
-        continue-on-error: true
-        timeout-minutes: 30
-        run: |
-          set +e
-          mkdir -p android/app/src/main/assets
-          cd android/app/src/main/assets
-          ok () { [ -s "$1" ] && [ "$(stat -c%s "$1")" -gt 1000000 ]; }
-
-          echo "=== ROUTE A: download prebuilt tflite ==="
-          for u in \
-            "https://huggingface.co/opencv/opencv_contribution/resolve/main/yolov8n/yolov8n.tflite" \
-            "https://huggingface.co/opencv/opencv_contribution/resolve/main/yolov8n/yolov8n_float32.tflite" \
-            "https://huggingface.co/Ultralytics/yolov8n/resolve/main/yolov8n.tflite"
-          do
-            rm -f tmp.tflite
-            curl -sL --max-time 120 -o tmp.tflite "$u"
-            echo "  try $u -> $(stat -c%s tmp.tflite 2>/dev/null || echo 0) bytes"
-            if ok tmp.tflite; then mv tmp.tflite yolov8_det.tflite; echo "  ROUTE A OK"; break; fi
-          done
-          rm -f tmp.tflite
-
-          if ! ok yolov8_det.tflite; then
-            echo "=== ROUTE B: pip install + export ==="
-            python3 -m pip install --quiet --upgrade pip
-            python3 -m pip install --quiet "tensorflow-cpu==2.15.0" 2>&1 | tail -3
-            python3 -m pip install --quiet ultralytics 2>&1 | tail -3
-            python3 -c "import tensorflow as tf, ultralytics;print('tf',tf.__version__);print('ultralytics',ultralytics.__version__)" 2>&1 | tail -5
-            python3 - <<'PY' 2>&1 | tail -50
-          import shutil, os, traceback
-          for tag in ["yolov8n"]:
-              try:
-                  print("TRY", tag, flush=True)
-                  from ultralytics import YOLO
-                  p = YOLO(tag + ".pt").export(format="tflite", imgsz=640)
-                  print("exported:", p, flush=True)
-                  shutil.copy(p, "yolov8_det.tflite")
-                  print("DET OK", os.path.getsize("yolov8_det.tflite"), flush=True)
-                  break
-              except Exception:
-                  traceback.print_exc()
-          PY
-          fi
-
-          echo "=== assets ==="
-          ls -la
-          true
-
-      - name: model-status
-        run: |
-          F=android/app/src/main/assets/yolov8_det.tflite
-          if [ -s "$F" ]; then
-            echo "::notice::DET_OK size=$(stat -c%s "$F")"
-          else
-            echo "::error::DET_MISSING - app will run in MOCK mode"
-          fi
-
-      - name: gradle
-        run: |
-          curl -sSL -o /tmp/g.zip https://services.gradle.org/distributions/gradle-8.5-bin.zip
-          sudo unzip -q -o /tmp/g.zip -d /opt
-          sudo chmod +x /opt/gradle-8.5/bin/gradle
-
-      - name: build
-        id: g
-        continue-on-error: true
-        run: |
-          set +e
-          cd android
-          /opt/gradle-8.5/bin/gradle assembleDebug --no-daemon \
-            -Dorg.gradle.jvmargs=-Xmx3g > /tmp/g.log 2>&1
-          echo "EXIT=$?" > /tmp/e.txt
-          cd ..
-          mkdir -p out
-          cp -v android/app/build/outputs/apk/debug/*.apk out/ 2>/dev/null
-          find . -name "*.apk" -exec cp {} out/ \; 2>/dev/null
-          set -e
-
-      - name: WHY
-        if: always()
-        run: |
-          touch /tmp/g.log /tmp/e.txt
-          echo "== EXIT =="; cat /tmp/e.txt
-          echo "== ERRORS =="; grep -m5 "error:" /tmp/g.log || echo "(none)"
-          echo "== CAUSE =="; grep -m2 -A2 "Caused by:" /tmp/g.log || echo "(none)"
-          echo "== APK =="; ls -la out || true
-          true
-
-      - name: fail-if-no-apk
-        run: |
-          test -n "$(ls -A out)" || { echo "::error::NO_APK"; exit 1; }
+          chmod +x ci-build.sh
+          bash ci-build.sh
 
       - uses: actions/upload-artifact@v4
         with:
